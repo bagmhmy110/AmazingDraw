@@ -1,0 +1,774 @@
+#!/usr/bin/env python3
+"""ComfyUI 抽卡控制台 Web UI 后端服务"""
+
+# =====================================================================
+# ─── SECTION 1: SYSTEM IMPORTS & LOGGER INITIALIZATION ───────────────
+# =====================================================================
+import sys
+from pathlib import Path as _Path
+for _p in [_Path(__file__).resolve().parent] + list(_Path(__file__).resolve().parent.parents):
+    _native = _p / 'card_engine_core' / 'native'
+    if _native.is_dir() and (
+        list(_native.glob('card_asset_loader*.so'))
+        or list(_native.glob('card_asset_loader*.pyd'))
+    ):
+        if str(_native) not in sys.path:
+            sys.path.insert(0, str(_native))
+        break
+
+
+import io
+import json
+import os
+import re
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+# 设定工作路径，并导入卡引擎
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(SCRIPT_DIR.parent / "card-engine"))
+sys.path.insert(0, str(SCRIPT_DIR.parent))
+import amazingdraw_paths  # noqa: E402  自有数据目录唯一解析入口（固定 ~/.amazingdraw）
+
+# 兼容 `python3 web_server.py` 直跑：预登记 __main__ 为 web_server，
+# 否则 api_cards 等子模块 `from web_server import ...` 会二次执行本文件，造成循环导入
+sys.modules.setdefault("web_server", sys.modules[__name__])
+
+import threading
+import glob
+from datetime import datetime
+
+class DailyRotatingFile:
+    def __init__(self, filename, backup_count=30):
+        self.filename = os.path.abspath(filename)
+        self.backup_count = backup_count
+        self.file = None
+        self.current_date = datetime.now().date()
+        self.lock = threading.Lock()
+        self._open_file()
+
+    def _open_file(self):
+        os.makedirs(os.path.dirname(self.filename), exist_ok=True)
+        self.file = open(self.filename, "a", encoding="utf-8", buffering=1)
+
+    def _rotate_if_needed(self):
+        now_date = datetime.now().date()
+        if now_date != self.current_date:
+            with self.lock:
+                if datetime.now().date() != self.current_date:
+                    self.file.close()
+                    suffix = self.current_date.strftime("%Y-%m-%d")
+                    rotated_name = f"{self.filename}.{suffix}"
+                    if os.path.exists(self.filename) and not os.path.exists(rotated_name):
+                        try:
+                            os.rename(self.filename, rotated_name)
+                        except Exception as e:
+                            sys.__stderr__.write(f"Failed to rotate log file: {e}\n")
+                    self.current_date = now_date
+                    self._open_file()
+                    self._cleanup_old_files()
+
+    def _cleanup_old_files(self):
+        pattern = f"{self.filename}.*"
+        files = sorted(glob.glob(pattern))
+        if len(files) > self.backup_count:
+            files_to_delete = files[:-self.backup_count]
+            for f in files_to_delete:
+                try:
+                    os.remove(f)
+                except Exception as e:
+                    sys.__stderr__.write(f"Failed to delete old log file {f}: {e}\n")
+
+    def write(self, data):
+        self._rotate_if_needed()
+        with self.lock:
+            self.file.write(data)
+
+    def flush(self):
+        with self.lock:
+            if self.file:
+                self.file.flush()
+
+    def isatty(self):
+        return False
+
+    @property
+    def closed(self):
+        return self.file.closed
+
+# Redirect stdout and stderr to DailyRotatingFile with ThreadLocalStream proxy to prevent multi-threading race conditions in run_core_cmd
+import threading
+
+def _mirror_stream(stream):
+    """只在交互终端下回显；`isatty()` 为假（守护进程 / 管道 / 重定向）时返回 None。
+
+    2026-09-22 排查 `/api/system/environment` 时踩过的坑：`import web_server` 会把
+    stdout 换成写日志文件的代理，于是冒烟脚本打印的东西在终端里**一个字都看不到**，
+    看起来"什么都没发生"，排查无从下手。加上终端镜像后开发时能直接看到结果，
+    而守护进程（stdout 是文件/管道）行为与改动前完全一致。
+    """
+    try:
+        return stream if stream is not None and stream.isatty() else None
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+class ThreadLocalStream:
+    def __init__(self, default_stream, mirror=None):
+        self.default_stream = default_stream
+        self.mirror = _mirror_stream(mirror)
+        self.local = threading.local()
+
+    def _mirror_write(self, data):
+        if self.mirror is None:
+            return
+        try:
+            self.mirror.write(data)
+            self.mirror.flush()
+        except (ValueError, OSError):
+            # 终端被关闭等异常场景：静默放弃镜像，绝不影响日志落盘
+            self.mirror = None
+
+    def write(self, data):
+        stream = getattr(self.local, 'stream', None)
+        if stream is not None:
+            stream.write(data)
+        else:
+            self.default_stream.write(data)
+        self._mirror_write(data)
+
+    def flush(self):
+        stream = getattr(self.local, 'stream', None)
+        if stream is not None:
+            stream.flush()
+        else:
+            self.default_stream.flush()
+        if self.mirror is not None:
+            try:
+                self.mirror.flush()
+            except (ValueError, OSError):
+                self.mirror = None
+
+    def isatty(self):
+        # 保持 False：uvicorn 等依赖 isatty 的行为与改动前完全一致
+        return False
+
+LOGS_DIR = SCRIPT_DIR / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+rotating_file = DailyRotatingFile(str(LOGS_DIR / "web_server.log"), backup_count=30)
+# mirror 取赋值前的原始终端流；守护进程里它是文件/管道，_mirror_stream 会判成 None
+sys.stdout = ThreadLocalStream(rotating_file, mirror=sys.stdout)
+sys.stderr = ThreadLocalStream(rotating_file, mirror=sys.stderr)
+
+
+from card_core import CARDS_DIR, save_card, load_card
+from prompt_rules import clean_user_message, normalize_chat_mode
+
+# =====================================================================
+# ─── SECTION 2: FASTAPI APP INSTANTIATION & MIDDLEWARES ──────────────
+# =====================================================================
+
+app = FastAPI(title="ComfyUI Card Engine Web UI", version="1.0.0")
+
+# 配置 CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+CONFIG_PATH = amazingdraw_paths.config_file()
+
+# 已废弃的配置键：读取时剔除、保存时不写回，避免旧 config.json 长期携带无人消费的字段
+DEPRECATED_CONFIG_KEYS = (
+    "output_dir_fallback",   # 额外搜救目录已移除
+    "agent_webhook_url",     # 随 custom_http 后端一并废弃
+    "agent_api_key",
+    "agent_backend",
+    "backends",
+    "comfyui_extra_models_config",  # 已废弃：不再配置、启动也不再传 yaml
+    "bound_scene_bypass_exposure_limit",  # 绑定场景始终绕过全局裸露限制
+    "openclaw_home",
+    "openclaw_bin",
+    "independent_llm_model",
+    "llm_fallback_models",
+    "openclaw_ws_timeout_seconds",
+)
+
+
+def _hydrate_llm_config(user_config: Dict[str, Any]) -> None:
+    """内存中补齐 llm 块，并与旧键 llm_model 对齐。不回写磁盘。"""
+    try:
+        from card_llm_client import resolve_llm_config
+        resolved = resolve_llm_config(user_config)
+    except Exception:
+        resolved = {
+            "base_url": "http://127.0.0.1:8317/v1",
+            "api_key": "",
+            "model": str(user_config.get("llm_model") or ""),
+            "timeout_seconds": 10,
+            "retry_limit": int(user_config.get("llm_retry_limit") or 1),
+        }
+    disk_llm = user_config.get("llm") if isinstance(user_config.get("llm"), dict) else {}
+    user_config["llm"] = {
+        "base_url": resolved["base_url"],
+        "api_key": str(disk_llm.get("api_key") or ""),
+        "model": resolved["model"],
+        "timeout_seconds": resolved["timeout_seconds"],
+        "retry_limit": resolved["retry_limit"],
+    }
+    if resolved["model"]:
+        user_config["llm_model"] = resolved["model"]
+    user_config["llm_retry_limit"] = resolved["retry_limit"]
+
+
+def _load_builtin_workflows_safe() -> dict:
+    try:
+        from card_config import load_builtin_workflows
+        return load_builtin_workflows()
+    except Exception:
+        return {}
+
+
+def _get_default_workflow_from_builtin() -> str:
+    return _load_builtin_workflows_safe().get("default_workflow", "moody_zib_zit")
+
+
+def _get_aliases_from_builtin() -> dict:
+    return dict(_load_builtin_workflows_safe().get("aliases", {}))
+
+
+def _get_workflows_from_builtin() -> dict:
+    return dict(_load_builtin_workflows_safe().get("workflows", {}))
+
+
+def load_system_config() -> Dict[str, Any]:
+    """载入本地 config.json，自带默认值兜底"""
+    defaults = {
+        "comfyui_host": "http://127.0.0.1:8188",
+        # 便携占位默认值；本机真实路径只写在 config.json，禁止在此硬编码机器路径
+        "output_dir": "~/Downloads/draw_things",
+        "custom_presets_dir": "",  # 空 = ~/.amazingdraw/custom_presets（amazingdraw_paths）
+        "recording_dir": "~/Downloads/draw_history",
+        "llm_model": "",
+        "llm": {
+            "base_url": "http://127.0.0.1:8317/v1",
+            "api_key": "",
+            "model": "",
+            "timeout_seconds": 10,
+            "retry_limit": 1,
+        },
+        "delivery_telegram": True,
+        "delivery_webui": True,
+        "chat_mode": "cards",
+        "comfyui_dir": str(Path.home() / "ComfyUI"),
+        "obsidian_vault_dir": "~/Documents/ObsidianVault",
+        "webui_host": "0.0.0.0",
+        "webui_port": 8318,
+        "scene_cooldown_window": 9,
+        "scene_library_weights": {
+            "school_scenes": 5,
+            "general_scenes": 5,
+            "medical_scenes": 3,
+            "workplace_scenes": 3,
+            "sm_scenes": 5,
+            "special_scenes": 5,
+            "perspective_scenes": 0,
+            "ancient_scenes": 3
+        },
+        # WebUI 场景权重面板依赖此注册表；缺省时前端会空白并可能自动保存成 {}
+        "scene_registry": {
+            "libraries": {
+                "school_scenes": {"type": "scene", "enabled": True, "name": "校园场景", "file": "school_scenes.json"},
+                "general_scenes": {"type": "scene", "enabled": True, "name": "通用场景", "file": "general_scenes.json"},
+                "medical_scenes": {"type": "scene", "enabled": True, "name": "医疗场景", "file": "medical_scenes.json"},
+                "workplace_scenes": {"type": "scene", "enabled": True, "name": "职场场景", "file": "workplace_scenes.json"},
+                "sm_scenes": {"type": "scene", "enabled": True, "name": "SM场景", "file": "sm_scenes.json"},
+                "special_scenes": {"type": "scene", "enabled": True, "name": "特殊场景", "file": "special_scenes.json"},
+                "perspective_scenes": {"type": "scene", "enabled": True, "name": "视角场景", "file": "perspective_scenes.json"},
+                "ancient_scenes": {"type": "scene", "enabled": True, "name": "古风场景", "file": "ancient_scenes.json"},
+            }
+        },
+        "llm_retry_limit": 1,
+        "auto_horizontal_for_multi": True,
+        "lock_size_to_workflow": True,
+        "resolution_presets": {
+            "vertical": {
+                "width": 512,
+                "height": 768
+            },
+            "horizontal": {
+                "width": 768,
+                "height": 512
+            },
+            "square": {
+                "width": 640,
+                "height": 640
+            },
+            "widescreen": {
+                "width": 1088,
+                "height": 464
+            }
+        },
+        "exposure_limit": ["half_covered", "half_nude"],
+        "disabled_celebrities": [],
+        "enable_ai_check": False,
+        "enable_independent_llm": True,
+        "llm_calls": {
+            "route_hint": True,
+            "multi_roles": True,
+            "body_classify": True,
+            "metadata": True,
+        },
+        "enable_cjk_sanitization": True,
+        "cloud": {
+            "enabled": False,
+            "image_backend": "comfy",
+            "delivery": "telegram",
+            "exposure_allowed_modes": ["half_covered"],
+        },
+        "default_workflow": _get_default_workflow_from_builtin(),
+        "workflows_aliases": _get_aliases_from_builtin(),
+        "workflows": _get_workflows_from_builtin(),
+    }
+    
+    # 智能检测：如果默认 output_dir 不存在，降级到用户 Pictures（仅作代码层占位，本机路径以 config.json 为准）
+    if not os.path.exists(os.path.expanduser(defaults["output_dir"])):
+        home = str(Path.home())
+        defaults["output_dir"] = os.path.join(home, "Pictures", "DrawThings")
+
+    if CONFIG_PATH.exists():
+        try:
+            user_config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            # 合并默认值
+            for k, v in defaults.items():
+                if k not in user_config:
+                    user_config[k] = v
+            user_config.pop("agent_backend", None)
+            user_config["chat_mode"] = "cards"
+            _hydrate_llm_config(user_config)
+            try:
+                from card_llm_client import hydrate_independent_llm_config
+                hydrate_independent_llm_config(user_config)
+            except Exception:
+                pass
+            for key in DEPRECATED_CONFIG_KEYS:
+                user_config.pop(key, None)
+            try:
+                from card_config import normalize_cloud_config
+                user_config["cloud"] = normalize_cloud_config(user_config.get("cloud"))
+            except Exception:
+                pass
+            
+            # 展开用户目录路径
+            config = user_config.copy()
+            for k in ["output_dir", "output_dir_archive", "obsidian_vault_dir", "comfyui_dir", "openclaw_workspace_dir", "custom_presets_dir"]:
+                if k in config and isinstance(config[k], str):
+                    val = os.path.expanduser(config[k])
+                    if val.strip() and not os.path.isabs(val):
+                        try:
+                            val = str((SCRIPT_DIR.parent.resolve() / val).resolve())
+                        except Exception:
+                            pass
+                    config[k] = val
+            return config
+        except Exception as e:
+            raise RuntimeError(f"配置文件 config.json 解析失败，格式或内容不正确: {e}") from e
+            
+    # 初始化写回 (使用未展开的 defaults)
+    try:
+        safe_write_config(CONFIG_PATH, json.dumps(defaults, indent=2, ensure_ascii=False))
+    except Exception:
+        pass
+        
+    # 返回展开后的 defaults
+    config = defaults.copy()
+    for k in ["output_dir", "output_dir_archive", "obsidian_vault_dir", "comfyui_dir", "custom_presets_dir"]:
+        if k in config and isinstance(config[k], str):
+            val = os.path.expanduser(config[k])
+            if val.strip() and not os.path.isabs(val):
+                try:
+                    val = str((SCRIPT_DIR.parent.resolve() / val).resolve())
+                except Exception:
+                    pass
+            config[k] = val
+    return config
+
+def safe_write_config(file_path: Path, content: str, max_backups: int = 9):
+    """
+    保存配置文件：变化时滚动备份至多 9 份；原子替换写入，避免并发/中断产生 Extra data。
+    """
+    try:
+        # 1. 解析软链接得到真实路径
+        real_path = file_path.resolve()
+        real_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 2. 进程内互斥 + 文件锁，降低并行冒烟/多实例写坏 JSON 的概率
+        if not hasattr(safe_write_config, "_lock"):
+            safe_write_config._lock = threading.Lock()
+
+        with safe_write_config._lock:
+            lock_path = real_path.with_name(real_path.name + ".lock")
+            lock_fd = None
+            try:
+                lock_fd = open(lock_path, "a+", encoding="utf-8")
+                try:
+                    import fcntl
+                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+                except Exception:
+                    pass
+
+                # 3. 检查是否需要备份
+                should_backup = False
+                if real_path.exists():
+                    try:
+                        old_content = real_path.read_text(encoding="utf-8")
+                        try:
+                            old_json = json.loads(old_content)
+                            new_json = json.loads(content)
+                            if old_json != new_json:
+                                should_backup = True
+                        except Exception:
+                            if old_content.strip() != content.strip():
+                                should_backup = True
+                    except Exception:
+                        should_backup = True
+
+                # 4. 滚动备份（拷贝，不 rename 原文件，避免读窗空洞）
+                if should_backup and real_path.exists():
+                    for i in range(max_backups - 1, 0, -1):
+                        src = real_path.with_name(f"{real_path.name}.bak.{i}")
+                        dst = real_path.with_name(f"{real_path.name}.bak.{i+1}")
+                        if src.exists():
+                            try:
+                                if dst.exists():
+                                    dst.unlink()
+                                src.rename(dst)
+                            except Exception:
+                                pass
+                    bak1 = real_path.with_name(f"{real_path.name}.bak.1")
+                    try:
+                        import shutil
+                        shutil.copy2(str(real_path), str(bak1))
+                    except Exception:
+                        pass
+
+                # 5. 原子写入：tmp + os.replace
+                tmp_path = real_path.with_name(real_path.name + f".tmp.{os.getpid()}")
+                tmp_path.write_text(content, encoding="utf-8")
+                os.replace(str(tmp_path), str(real_path))
+            finally:
+                if lock_fd is not None:
+                    try:
+                        import fcntl
+                        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                    except Exception:
+                        pass
+                    try:
+                        lock_fd.close()
+                    except Exception:
+                        pass
+
+    except Exception:
+        # 最终安全降级：仍尽量原子写；全部失败必须向上抛，避免 API 误报成功
+        try:
+            real_path = file_path.resolve()
+            tmp_path = real_path.with_name(real_path.name + f".tmp.{os.getpid()}")
+            tmp_path.write_text(content, encoding="utf-8")
+            os.replace(str(tmp_path), str(real_path))
+        except Exception:
+            try:
+                file_path.write_text(content, encoding="utf-8")
+            except Exception as final_exc:
+                raise OSError(
+                    f"safe_write_config failed for {file_path}: {final_exc}"
+                ) from final_exc
+
+def save_system_config(config_data: Dict[str, Any]):
+    """保存配置并合并已有字段"""
+    config_data.pop("agent_backend", None)
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    
+    current_config = {}
+    if CONFIG_PATH.exists():
+        try:
+            current_config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # 防护：空 scene_library_weights / 空 scene_registry 不覆盖已有有效配置
+    if isinstance(config_data.get("scene_library_weights"), dict) and not config_data["scene_library_weights"]:
+        if current_config.get("scene_library_weights"):
+            config_data = dict(config_data)
+            config_data.pop("scene_library_weights", None)
+    reg = config_data.get("scene_registry")
+    if isinstance(reg, dict) and not (reg.get("libraries") or {}):
+        if current_config.get("scene_registry", {}).get("libraries"):
+            config_data = dict(config_data)
+            config_data.pop("scene_registry", None)
+
+    # 防护：旧前端页面整包回传 workflows 时，禁止把磁盘已配置的明星 LoRA 节点抹空
+    incoming_wfs = config_data.get("workflows")
+    existing_wfs = current_config.get("workflows")
+    if isinstance(incoming_wfs, dict) and isinstance(existing_wfs, dict):
+        from card_config import merge_preserved_workflows
+        config_data = dict(config_data)
+        config_data["workflows"] = merge_preserved_workflows(
+            existing_wfs,
+            incoming_wfs,
+            replace=bool(config_data.get("_replace_workflows")),
+        )
+    config_data = dict(config_data)
+    config_data.pop("_replace_workflows", None)
+            
+    for k, v in config_data.items():
+        current_config[k] = v
+    if isinstance(current_config.get("llm"), dict):
+        llm_block = current_config["llm"]
+        if llm_block.get("model"):
+            current_config["llm_model"] = llm_block["model"]
+        llm_block.pop("independent_model", None)
+        llm_block.pop("fallback_models", None)
+        if llm_block.get("retry_limit") is not None:
+            current_config["llm_retry_limit"] = llm_block["retry_limit"]
+
+    if "cloud" in current_config:
+        try:
+            from card_config import normalize_cloud_config
+            current_config["cloud"] = normalize_cloud_config(current_config.get("cloud"))
+        except Exception:
+            pass
+
+    for key in DEPRECATED_CONFIG_KEYS:
+        current_config.pop(key, None)
+        
+    safe_write_config(CONFIG_PATH, json.dumps(current_config, indent=2, ensure_ascii=False))
+
+# =====================================================================
+# ─── SECTION 3: SYSTEM INITIALIZATION & STATIC FOLDER MOUNTING ───────
+# =====================================================================
+
+# 载入运行期配置
+sys_config = load_system_config()
+
+# 动态挂载图片服务，带防御性容错
+images_app = StaticFiles()
+app.mount("/images", images_app, name="images")
+
+def update_images_mount():
+    """动态更新挂载的出图预览目录。
+
+    ``/images``：``output_dir_archive`` 优先，同时挂载本地 ``output_dir``
+    （交付外置盘超时后成品留在 Comfy 本地，WebUI 仍可预览）。
+    """
+    config = load_system_config()
+    archive_dir = (config.get("output_dir_archive") or "").strip()
+    out_dir = (config.get("output_dir") or "").strip()
+
+    primary_dirs: list[str] = []
+    seen: set[str] = set()
+    for raw in (archive_dir, out_dir):
+        if not raw:
+            continue
+        abs_path = os.path.abspath(os.path.expanduser(raw))
+        try:
+            key = str(Path(abs_path).resolve())
+        except (OSError, RuntimeError):
+            key = abs_path
+        if key in seen:
+            continue
+        seen.add(key)
+        os.makedirs(abs_path, exist_ok=True)
+        primary_dirs.append(abs_path)
+
+    if primary_dirs:
+        images_app.directory = primary_dirs[0]
+        images_app.all_directories = primary_dirs
+
+# 初始挂载
+update_images_mount()
+
+
+def run_core_cmd(cmd_func, args):
+    """安全唤起核心引擎，截获 SystemExit 以防 Web 进程崩溃，捕获控制台输出并捕获返回值"""
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+    exited = False
+    exit_code = 0
+    ret = None
+    
+    # Use thread-local streams to capture prints in a thread-safe manner
+    if hasattr(sys.stdout, 'local'):
+        sys.stdout.local.stream = stdout_buf
+    if hasattr(sys.stderr, 'local'):
+        sys.stderr.local.stream = stderr_buf
+
+    try:
+        ret = cmd_func(args)
+    except SystemExit as e:
+        exited = True
+        exit_code = e.code if isinstance(e.code, int) else 1
+    except BaseException as e:
+        import traceback
+        traceback.print_exc(file=stderr_buf)
+        exited = True
+        exit_code = 999
+    finally:
+        if hasattr(sys.stdout, 'local'):
+            sys.stdout.local.stream = None
+        if hasattr(sys.stderr, 'local'):
+            sys.stderr.local.stream = None
+            
+    return {
+        "stdout": stdout_buf.getvalue(),
+        "stderr": stderr_buf.getvalue(),
+        "exited": exited,
+        "exit_code": exit_code,
+        "return_value": ret
+    }
+
+
+
+# cards/settings/pipeline → api_cards.py
+def get_chat_history_dir() -> Path:
+    # 1. 优先使用环境变量自定义路径，极大提升 Docker/容器化部署时的移植性
+    env_dir = os.environ.get("AMAZING_DRAW_CHAT_DIR")
+    if env_dir:
+        return Path(env_dir)
+
+    # 2. 默认 ~/.amazingdraw/webui-chat（卡片 jsonl 历史）
+    return amazingdraw_paths.chat_dir()
+
+CHAT_HISTORY_DIR = get_chat_history_dir()
+if amazingdraw_paths.legacy_migration_pending():
+    print("⚠️ 检测到旧数据目录 ~/.openclaw/draw-cards 或 ~/.openclaw/webui-chat 尚未迁移到 ~/.amazingdraw，"
+          "请运行: python3 scripts/amazingdraw_paths.py migrate", flush=True)
+
+
+def safe_chat_id(card_id: Optional[str]) -> str:
+    raw = card_id or "home"
+    return re.sub(r"[^0-9A-Za-z_.-]", "_", raw)[:120] or "home"
+
+
+def webui_session_id(card_id: Optional[str]) -> str:
+    return f"webui-draw-card-{safe_chat_id(card_id)}"
+
+
+def chat_history_file(card_id: Optional[str]) -> Path:
+    return CHAT_HISTORY_DIR / f"{safe_chat_id(card_id)}.jsonl"
+
+
+_CHAT_HISTORY_LOCKS = {}
+_CHAT_HISTORY_LOCKS_GUARD = threading.Lock()
+
+
+def _chat_history_lock(path: Path):
+    with _CHAT_HISTORY_LOCKS_GUARD:
+        return _CHAT_HISTORY_LOCKS.setdefault(path, threading.Lock())
+
+
+def append_chat_history(card_id: Optional[str], role: str, content: str):
+    CHAT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    item = {"role": role, "content": content, "time": int(time.time())}
+    path = chat_history_file(card_id)
+    with _chat_history_lock(path):
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def clear_chat_history(card_id: Optional[str]):
+    chat_history_file(card_id).unlink(missing_ok=True)
+
+
+# chat routes → api_chat.py
+
+def webui_session_file(session_id: str = "webui-draw-home") -> Path:
+    """会话文件 = 对话历史文件，全局唯一一份。
+
+    早先这里另开了 scripts/webui/sessions/<backend>/ 做「会话索引」，内容恒为空，
+    只靠文件名与 mtime 支撑列表。一份数据两个地方带来三处失准：
+    标题永远取不到、排序按创建时间而非最后活跃、有历史但索引缺失的会话直接从列表消失。
+    现在只保留 CHAT_HISTORY_DIR 这一处。
+    """
+    return chat_history_file(session_id)
+
+
+STATIC_DIR = SCRIPT_DIR / "static"
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
+
+from api_cards import router as cards_router
+from api_queue import router as queue_router
+from api_chat import router as chat_router
+from api_system import router as system_router
+from api_albums import router as albums_router
+from api_guoman import router as guoman_router
+from api_guoman_portrait import router as guoman_portrait_router
+from api_moss_architect import router as moss_architect_router
+from api_nsfw_templates import router as nsfw_templates_router
+from api_adult_photo21 import router as adult_photo21_router
+from api_upscale import router as upscale_router
+from api_anime_oneesan import router as anime_oneesan_router
+from api_batch_draw import router as batch_draw_router
+from api_script_expand import router as script_expand_router
+app.include_router(cards_router)
+app.include_router(queue_router)
+app.include_router(chat_router)
+app.include_router(system_router)
+app.include_router(albums_router)
+app.include_router(guoman_router)
+app.include_router(guoman_portrait_router)
+app.include_router(moss_architect_router)
+app.include_router(nsfw_templates_router)
+app.include_router(adult_photo21_router)
+app.include_router(upscale_router)
+app.include_router(anime_oneesan_router)
+app.include_router(batch_draw_router)
+app.include_router(script_expand_router)
+
+
+@app.middleware("http")
+async def _no_cache_for_frontend(request, call_next):
+    """给前端静态资源加 no-cache，避免改了 JS/CSS 浏览器还在用旧缓存。
+
+    只对 .html/.js/.css 生效；图片和字体仍然走正常缓存（它们体积大且不常变）。
+    """
+    resp = await call_next(request)
+    path = request.url.path.lower()
+    if path.endswith((".html", ".js", ".css")) or path in ("/", ""):
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
+
+
+app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+
+
+if __name__ == "__main__":
+    # 前端开发目录初始化
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    # 局域网启动监听
+    cfg = load_system_config()
+    host = cfg.get("webui_host", "0.0.0.0")
+    port = cfg.get("webui_port", 8318)
+    # 提示词 skill 的 LLM 调用要 40-60 秒，uvicorn 默认 keep-alive 只有 5 秒，
+    # 会导致长请求被提前掐断（前端看到 Internal Server Error / 连接重置）。
+    uvicorn.run(
+        "web_server:app",
+        host=host,
+        port=port,
+        reload=False,
+        timeout_keep_alive=300,
+    )

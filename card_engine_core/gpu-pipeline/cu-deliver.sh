@@ -1,0 +1,904 @@
+#!/bin/bash
+CARD_ENGINE_TMP="${CARD_ENGINE_TMP:-/tmp/cu-card}"
+mkdir -p "$CARD_ENGINE_TMP"
+# cu-deliver.sh — 自动交付：读 done.json + meta.json → 发 Telegram
+# 由 cu-draw-card.py && cu-deliver.sh 链式调用，画完自动发图
+# 环境变量：META_FILE / DONE_FILE / JOB_ID / LEASE_TOKEN（必传）
+#             CARD_ID / WORKFLOW / REQUESTED_SEED（worker 透传上下文）
+set -euo pipefail
+
+show_help() {
+    cat <<EOF
+📤 GPU 渲染自动交付与 Telegram 发图脚本 (cu-deliver.sh)
+=========================================
+本脚本读取渲染完成后的标记文件与元数据，执行自动重命名、归档，并推送发图至 Telegram 频道。
+
+用法:
+  环境变量参数控制模式 (常规调用)：
+    export META_FILE="/tmp/cu-card/card_meta_xxx.json"
+    export DONE_FILE="/tmp/cu-card/cu-draw-card-done_xxx.json"
+    export JOB_ID="job-..."
+    export LEASE_TOKEN="..."
+    [export CARD_ID="card-..."]
+    [export WORKFLOW="portrait-v2"]
+    [export REQUESTED_SEED="123456"]
+    [export GPU_LOCK="/tmp/cu-card/cu-gpu.lock"]
+    bash cu-deliver.sh
+
+环境变量说明:
+  META_FILE  存储卡片渲染元数据、人物、场景、Caption 信息的 JSON 文件路径 (必填)
+  DONE_FILE  ComfyUI 渲染成功后落盘的标记 JSON 文件路径 (必填)
+  JOB_ID     队列任务 ID (必填)
+  LEASE_TOKEN  worker claim 的条件 ACK 令牌 (必填)
+  CARD_ID    关联卡片 ID (可选，通常由 worker 透传)
+  WORKFLOW   本任务工作流别名 (可选，通常由 worker 透传)
+  REQUESTED_SEED  提交时指定的 Seed；实际 Seed 仍以 DONE_FILE 为准 (可选)
+  GPU_LOCK   GPU 排队排他锁路径，交付完成后脚本会自动释放此锁 (可选，默认 $CARD_ENGINE_TMP/cu-gpu.lock)
+  CU_BETWEEN_CARDS  连抽卡间策略（仅队列非空时生效；单张跳过）:
+                    restart（默认）| free | off
+  CU_FREE_BETWEEN   仅当 CU_BETWEEN_CARDS=free 时生效；=0 可关 /free
+  CU_FREE_TIMEOUT   /free 等待显存回升超时秒数（默认 90）
+  CU_AUTO_STOP_DELAY 队列空后延迟停 Comfy 秒数（默认 60）
+  TELEGRAM_BOT_TOKEN  Bot Token 兜底：仅当 config.json 的 telegram_bot_token 为空时读取
+EOF
+    exit 0
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+    show_help
+fi
+
+# ═══ 日志落地(调试用,自动轮转保留最近 5 次) ═══
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${CU_CONFIG_FILE:-$(python3 "${SCRIPT_DIR}/../amazingdraw_paths.py" get config_file 2>/dev/null || echo "${SCRIPT_DIR}/../config.json")}"
+
+# ── 统一配置读取（Windows 反斜杠路径不能内联进 python -c）─────────────
+CFG_GET="${SCRIPT_DIR}/../cfg_get.py"
+if [ ! -f "$CFG_GET" ]; then
+    CFG_GET="$(cd "${SCRIPT_DIR}/../.." && pwd)/scripts/cfg_get.py"
+fi
+_cfg() {
+    if [ -f "$CFG_GET" ]; then
+        python3 "$CFG_GET" "$CONFIG_FILE" "$1" "${2:-}"
+    else
+        printf '%s' "${2:-}"
+    fi
+}
+TMP_DIR="${CU_WORK_DIR:-$(_cfg tmp_dir "/tmp/cu-card")}"
+WORKSPACE="${CU_WORKSPACE:-$(python3 "${SCRIPT_DIR}/../amazingdraw_paths.py" get workspace)}"
+QUEUE_SCRIPT="${SCRIPT_DIR}/cu-queue.py"
+LOG_DIR="$TMP_DIR"
+LOG_FILE="$LOG_DIR/cu-deliver.log"
+for i in 4 3 2 1; do
+    [ -f "$LOG_FILE.$i" ] && mv "$LOG_FILE.$i" "$LOG_FILE.$((i+1))" 2>/dev/null
+true
+done
+[ -f "$LOG_FILE" ] && mv "$LOG_FILE" "$LOG_FILE.1" 2>/dev/null
+true
+exec 2> >(tee -a "$LOG_FILE" >&2)
+echo "=== cu-deliver $(date '+%Y-%m-%d %H:%M:%S') ===" >&2
+echo "META_FILE=$META_FILE" >&2
+
+DONE_FILE="${DONE_FILE:-$TMP_DIR/cu-draw-card-done.json}"
+JOB_ID="${JOB_ID:-${CU_JOB_ID:-}}"
+CARD_ID="${CARD_ID:-${CU_CARD_ID:-}}"
+LEASE_TOKEN="${LEASE_TOKEN:-${CU_LEASE_TOKEN:-}}"
+WORKFLOW="${WORKFLOW:-${CU_WORKFLOW:-}}"
+REQUESTED_SEED="${REQUESTED_SEED:-${CU_SEED:-}}"
+CHAT_ID=$(_cfg telegram_chat_id "")
+GPU_LOCK="${GPU_LOCK:-$TMP_DIR/cu-gpu.lock}"
+FAILED_DIR="$TMP_DIR/failed-delivery"
+SUCCESS_DIR="$TMP_DIR/success-delivery"
+mkdir -p "$FAILED_DIR" "$SUCCESS_DIR"
+
+LOCK_RELEASED=0
+release_gpu_lock() {
+    if [ "${LOCK_RELEASED:-0}" -eq 0 ]; then
+        rm -f "$GPU_LOCK"
+        LOCK_RELEASED=1
+        echo "🔓 GPU 锁已释放"
+    fi
+}
+trap release_gpu_lock EXIT
+
+# ── 0. 检查 meta 文件 ──
+if [ -z "$META_FILE" ]; then
+    echo "❌ META_FILE env not set" >&2
+    exit 1
+fi
+if [ -z "$JOB_ID" ] || [ -z "$LEASE_TOKEN" ]; then
+    echo "❌ JOB_ID / LEASE_TOKEN env not set" >&2
+    exit 1
+fi
+
+# ── 0.5 读取投递位置选项配置 ──
+DELIVERY_TELEGRAM=$(_cfg delivery_telegram 1)
+DELIVERY_WEBUI=$(_cfg delivery_webui 1)
+echo "📤 Delivery Options: Telegram=$DELIVERY_TELEGRAM, WebUI=$DELIVERY_WEBUI"
+
+# ── 1. 读 done.json ──
+if [ ! -f "$DONE_FILE" ]; then
+    echo "❌ $DONE_FILE not found" >&2
+    exit 1
+fi
+
+# DONE_FILE 是 Windows 路径，含反斜杠，不能内联进 python -c（会被当转义序列）。
+# 统一经 argv 传入。
+_done_field() {
+    python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))[sys.argv[2]])" "$DONE_FILE" "$1"
+}
+
+FILE=$(_done_field file)
+SEED=$(_done_field seed)
+ELAPSED=$(_done_field elapsed_min)
+
+echo "📦 File: $FILE"
+echo "🎲 Seed: $SEED"
+echo "⏱️  Elapsed: ${ELAPSED}分钟"
+
+# ── 1.5 重命名为中文标题 + 搬运到归档目录（本地盘 → 外置卷） ──
+# Comfy 输出在本地盘；优先拷到 output_dir_archive。外置盘超时/失败时：
+# 在本地 output 完成同规则中文命名，继续 Telegram/WebUI 投递（绝不阻塞放锁）。
+ARCHIVE_DIR=$(_cfg output_dir_archive "" 2>/dev/null || echo "")
+ARCHIVE_CP_TIMEOUT="${ARCHIVE_CP_TIMEOUT:-90}"
+if [ -f "$META_FILE" ]; then
+    export FILE META_FILE ARCHIVE_DIR DONE_FILE ARCHIVE_CP_TIMEOUT
+    RENAME_RESULT=$(python3 - <<'PY'
+import json, os, re, shutil, signal
+from pathlib import Path
+
+src = Path(os.environ.get("FILE") or "")
+meta_path = Path(os.environ.get("META_FILE") or "")
+archive_dir = (os.environ.get("ARCHIVE_DIR") or "").strip()
+done_path = Path(os.environ.get("DONE_FILE") or "")
+timeout_s = int(os.environ.get("ARCHIVE_CP_TIMEOUT") or "90")
+
+def unique(path: Path) -> Path:
+    if not path.exists():
+        return path
+    base = path.with_suffix("")
+    i = 1
+    while True:
+        cand = Path(f"{base}_{i}.png")
+        if not cand.exists():
+            return cand
+        i += 1
+
+def chinese_name(meta: dict) -> str:
+    person = (meta.get("person") or "").strip()
+    scene = (meta.get("scene") or "").strip()
+    theme = (meta.get("theme") or "").strip()
+    if not (person and scene):
+        return ""
+    name = f"{person}-{scene}-{theme}" if theme else f"{person}-{scene}"
+    name = re.sub(r"[^\u4e00-\u9fff\w.-]", "-", name)
+    name = re.sub(r"-+", "-", name).strip("-")
+    return f"{name}.png"
+
+def update_done(final: Path) -> None:
+    if not done_path.exists():
+        return
+    try:
+        data = json.loads(done_path.read_text(encoding="utf-8"))
+        data["file"] = str(final)
+        data["filename"] = final.name
+        done_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+out = {"ok": False, "file": str(src), "mode": "skip", "msg": ""}
+if not (src.is_file() and meta_path.is_file()):
+    print(json.dumps(out, ensure_ascii=False))
+    raise SystemExit(0)
+
+try:
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+except Exception:
+    print(json.dumps(out, ensure_ascii=False))
+    raise SystemExit(0)
+
+fname = chinese_name(meta)
+if not fname:
+    print(json.dumps(out, ensure_ascii=False))
+    raise SystemExit(0)
+
+local_path = unique(src.parent / fname)
+archive_path = None
+if archive_dir and Path(archive_dir).is_dir():
+    # 归档必须跟随本地取到的名字 ——
+    # 原来两边各自 unique()，本地拿到 _1、归档拿到 _2，
+    # 卡片记录的 render_image 是本地名，归档里却是另一个名，导致错位与重复卡片。
+    archive_path = Path(archive_dir) / local_path.name
+    if archive_path.exists():
+        archive_path = unique(archive_path)
+
+final = None
+mode = "local_rename"
+msg = ""
+
+class _Timeout(Exception):
+    pass
+
+def _on_alarm(signum, frame):
+    raise _Timeout("archive_cp_timeout")
+
+def _copy_with_timeout(src_path, dst_path, seconds):
+    """跨平台带超时的拷贝。
+
+    POSIX 用 signal.alarm；Windows 没有 SIGALRM，退化为线程 + join(timeout)。
+    """
+    seconds = max(5, int(seconds))
+    if hasattr(signal, "SIGALRM") and hasattr(signal, "alarm"):
+        signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(seconds)
+        try:
+            shutil.copy2(src_path, dst_path)
+        finally:
+            signal.alarm(0)
+        return
+
+    import threading
+    box = {}
+
+    def _worker():
+        try:
+            shutil.copy2(src_path, dst_path)
+        except BaseException as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(seconds)
+    if t.is_alive():
+        raise _Timeout("archive_cp_timeout")
+    if "error" in box:
+        raise box["error"]
+
+if archive_path is not None and archive_path.parent.resolve() != src.parent.resolve():
+    try:
+        _copy_with_timeout(src, archive_path, timeout_s)
+        if archive_path.is_file() and archive_path.stat().st_size == src.stat().st_size:
+            src.unlink(missing_ok=True)
+            final = archive_path
+            mode = "archive"
+            msg = f"Moved to archive: {archive_path.name} (源已删, {archive_path.stat().st_size}B)"
+        else:
+            archive_path.unlink(missing_ok=True)
+            msg = "archive copy size mismatch, fallback local rename"
+    except _Timeout:
+        try:
+            archive_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        msg = f"archive copy timeout ({timeout_s}s), fallback local rename"
+    except Exception as e:
+        try:
+            archive_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        msg = f"archive copy failed ({type(e).__name__}), fallback local rename"
+
+if final is None:
+    try:
+        if src.resolve() != local_path.resolve():
+            src.rename(local_path)
+        final = local_path
+        mode = "local_rename" if mode != "archive" else mode
+        if not msg:
+            msg = f"Renamed: {final.name}"
+        elif "fallback" in msg:
+            msg = f"{msg} → {final.name}"
+    except Exception as e:
+        final = src if src.is_file() else None
+        mode = "keep_src"
+        msg = f"local rename failed ({type(e).__name__}), keep source"
+
+if final is not None:
+    update_done(final)
+    out = {"ok": True, "file": str(final), "mode": mode, "msg": msg}
+else:
+    out = {"ok": False, "file": str(src), "mode": mode, "msg": msg or "rename skipped"}
+print(json.dumps(out, ensure_ascii=False))
+PY
+)
+    if [ -n "$RENAME_RESULT" ]; then
+        NEW_FILE=$(RENAME_RESULT="$RENAME_RESULT" python3 -c 'import json,os; print(json.loads(os.environ["RENAME_RESULT"]).get("file") or "")')
+        RENAME_MSG=$(RENAME_RESULT="$RENAME_RESULT" python3 -c 'import json,os; print(json.loads(os.environ["RENAME_RESULT"]).get("msg") or "")')
+        RENAME_MODE=$(RENAME_RESULT="$RENAME_RESULT" python3 -c 'import json,os; print(json.loads(os.environ["RENAME_RESULT"]).get("mode") or "")')
+        if [ -n "$RENAME_MSG" ]; then
+            case "$RENAME_MODE" in
+                archive) echo "📦 $RENAME_MSG" ;;
+                local_rename)
+                    if echo "$RENAME_MSG" | grep -q 'fallback'; then
+                        echo "⚠️ archive fallback → local rename: $RENAME_MSG" >&2
+                    else
+                        echo "📛 $RENAME_MSG"
+                    fi
+                    ;;
+                *) echo "⚠️ $RENAME_MSG" >&2 ;;
+            esac
+        fi
+        if [ -n "$NEW_FILE" ] && [ -f "$NEW_FILE" ]; then
+            FILE="$NEW_FILE"
+        fi
+    fi
+fi
+
+# ── 2. 获取 Bot Token ──
+# 优先级：config.json 的 telegram_bot_token → 环境变量 TELEGRAM_BOT_TOKEN
+# （api_queue.py 的 _telegram_token_configured 保持同一顺序；不读 .bot_tokens）
+# 未配置 token 时只跳过 Telegram 通道，绝不能中断 WebUI 交付。
+BOT_TOKEN=$(_cfg telegram_bot_token "" 2>/dev/null || echo "")
+if [ -z "$BOT_TOKEN" ]; then
+    BOT_TOKEN=$(printf '%s' "${TELEGRAM_BOT_TOKEN:-}" | tr -d '[:space:]')
+fi
+if [ "${DELIVERY_TELEGRAM:-1}" = "1" ]; then
+    if [ -z "$BOT_TOKEN" ]; then
+        echo "⚠️ 未配置 telegram_bot_token → 跳过 Telegram 交付，继续 WebUI" >&2
+        DELIVERY_TELEGRAM=0
+    elif ! printf '%s' "$BOT_TOKEN" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]{20,}$'; then
+        echo "⚠️ telegram_bot_token 格式无效 → 跳过 Telegram 交付，继续 WebUI" >&2
+        DELIVERY_TELEGRAM=0
+    fi
+fi
+
+# ── 3. 组装 Caption(保留标题 + 引用 + Seed) ──
+# 注意：CONFIG_FILE / META_FILE 均为 Windows 路径，含反斜杠，
+# 不能内联进 python 源码（会被当转义序列）。统一经 argv 传入。
+if [ -f "$META_FILE" ]; then
+    CAPTION=$(python3 - "$CONFIG_FILE" "$META_FILE" "$SEED" "$ELAPSED" <<'PY'
+import json, re, sys
+
+def convert_markdown_tables_to_lists(text):
+    lines = (text or '').splitlines()
+    out = []
+
+    def split_row(line):
+        return [c.strip() for c in line.strip().strip('|').split('|')]
+
+    def is_table_separator(line):
+        s = line.strip()
+        if not (s.startswith('|') and s.endswith('|')):
+            return False
+        cells = [c.strip() for c in s.strip('|').split('|')]
+        return bool(cells) and all(re.fullmatch(r':?-{3,}:?', c) for c in cells)
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        s = line.strip()
+        if s.startswith('|') and s.endswith('|') and i + 1 < len(lines) and is_table_separator(lines[i + 1]):
+            headers = split_row(line)
+            i += 2
+            row_index = 0
+            while i < len(lines):
+                row = lines[i].strip()
+                if not (row.startswith('|') and row.endswith('|')):
+                    break
+                cells = split_row(row)
+                if len(cells) != len(headers):
+                    break
+                row_index += 1
+                row_title = cells[0] or f'第{row_index}项'
+                out.append(row_title)
+                for header, cell in zip(headers[1:], cells[1:]):
+                    if cell:
+                        out.append(f'• {header}：{cell}')
+                out.append('')
+                i += 1
+            while out and out[-1] == '' and (i >= len(lines) or not lines[i].strip()):
+                out.pop()
+            continue
+        out.append(line)
+        i += 1
+
+    return '\n'.join(out).strip()
+
+
+def normalize_caption(raw_caption, seed, elapsed, group_url=''):
+    text = (raw_caption or '').replace('{SEED}', str(seed)).replace('{ELAPSED}', str(elapsed)).strip()
+    text = re.sub(r'\n\s*Seed:\s*.*$', '', text, flags=re.S).strip()
+    text = convert_markdown_tables_to_lists(text)
+
+    title = ''
+    quote = ''
+
+    m_title = re.match(r'^(.*?)(?:\n\s*\n|\n<blockquote>)', text, re.S)
+    if m_title:
+        title = m_title.group(1).strip()
+    elif text and '<blockquote>' not in text:
+        title = text.strip()
+
+    m_quote = re.search(r'<blockquote>(.*?)</blockquote>', text, re.S)
+    if m_quote:
+        quote = ' '.join(m_quote.group(1).split())
+
+    body = text
+    if title:
+        body = re.sub(r'^' + re.escape(title) + r'\s*', '', body, count=1).strip()
+    body = re.sub(r'<blockquote>.*?</blockquote>', '', body, flags=re.S).strip()
+
+    parts = []
+    if title:
+        parts.append(title)
+    if quote:
+        parts.append(f'<blockquote>{quote}</blockquote>')
+    if body:
+        parts.append(body)
+    if not parts:
+        parts.append('🎬 图片已生成 主人请检阅')
+    q = chr(34)
+    seed_display = f'<a href={q}{group_url}{q}>{seed}</a>' if group_url else str(seed)
+    parts.append(f'Seed: {seed_display} | {elapsed}分钟')
+    return '\n\n'.join(parts)
+
+config = {}
+try:
+    with open(sys.argv[1], encoding='utf-8') as cf:
+        config = json.load(cf)
+except Exception:
+    pass
+group_url = str(config.get('telegram_group_url') or '').strip()
+
+with open(sys.argv[2], encoding='utf-8') as f:
+    meta = json.load(f)
+seed_arg = sys.argv[3] if len(sys.argv) > 3 else ''
+elapsed_arg = sys.argv[4] if len(sys.argv) > 4 else ''
+print(normalize_caption(meta.get('caption', ''), seed_arg, elapsed_arg, group_url))
+PY
+)
+    REPLY_ID=$(python3 - "$META_FILE" <<'PY' 2>/dev/null
+import json, sys
+try:
+    with open(sys.argv[1], encoding='utf-8') as f:
+        meta = json.load(f)
+    rid = meta.get('reply_id', '')
+    rid = '' if rid is None else str(rid).strip()
+    print('' if rid.lower() in ('', 'none', 'null') else rid)
+except Exception:
+    print('')
+PY
+)
+else
+    GROUP_URL=$(_cfg telegram_group_url "" 2>/dev/null || echo "")
+    if [ -n "$GROUP_URL" ]; then
+        SEED_DISPLAY="<a href=\"${GROUP_URL}\">${SEED}</a>"
+    else
+        SEED_DISPLAY="${SEED}"
+    fi
+    CAPTION=$(printf "🎬 图片已生成 主人请检阅\n\nSeed: %s | %s分钟" "$SEED_DISPLAY" "${ELAPSED}")
+    REPLY_ID=""
+fi
+
+# ── 4. 发送 Telegram（最多重试 3 次，成功才继续队列） ──
+# 防重复：只有"请求确定没送到 Telegram"才重试；照片已完整上传后超时/断连
+# （回执丢失）则不重发，记为 delivered_uncertain（可能已送达）。
+RESP=''
+SEND_OK='0'
+SEND_UNCERTAIN='0'
+ALREADY_DELIVERED='0'
+CURL_RC=''
+CURL_STATS=''
+CURL_MAX_TIME="${CURL_MAX_TIME:-120}"
+CURL_CONNECT_TIMEOUT="${CURL_CONNECT_TIMEOUT:-15}"
+TELEGRAM_API_BASE="${CU_TELEGRAM_API_BASE:-https://api.telegram.org}"
+SEND_RETRY_SLEEP="${CU_SEND_RETRY_SLEEP:-10}"
+RESP_BODY_FILE="$TMP_DIR/cu-deliver-resp_${JOB_ID:-nojob}_$$.json"
+
+# 该 job 是否已有成功交付记录（或"可能已送达"记录）；有则绝不再发
+job_already_delivered() {
+    [ -n "${JOB_ID:-}" ] || return 1
+    JOB_ID="$JOB_ID" SUCCESS_DIR="$SUCCESS_DIR" FAILED_DIR="$FAILED_DIR" python3 - <<'PY'
+import glob, json, os, sys
+job = os.environ['JOB_ID']
+paths = glob.glob(os.path.join(os.environ['SUCCESS_DIR'], 'delivery_success_*.json'))
+paths += glob.glob(os.path.join(os.environ['FAILED_DIR'], 'delivery_uncertain_*.json'))
+for path in paths:
+    try:
+        d = json.load(open(path, encoding='utf-8'))
+    except Exception:
+        continue
+    if d.get('job_id') == job and d.get('mode') in ('success', 'delivered_uncertain'):
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+if [ "${DELIVERY_TELEGRAM:-1}" = "1" ]; then
+    FILE_BYTES=$(wc -c < "$FILE" | tr -d ' ')
+    for ATTEMPT in 1 2 3; do
+        if job_already_delivered; then
+            echo "🛑 job ${JOB_ID} 已有成功/可能已送达记录，跳过发送 (attempt $ATTEMPT/3)"
+            ALREADY_DELIVERED='1'
+            SEND_OK='1'
+            break
+        fi
+        rm -f "$RESP_BODY_FILE"
+        CURL_RC=0
+        if [ -n "$REPLY_ID" ]; then
+            echo "↩️  Reply to: $REPLY_ID (attempt $ATTEMPT/3)"
+            CURL_STATS=$(curl -sS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" -X POST "${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/sendPhoto" \
+              -o "$RESP_BODY_FILE" -w '%{http_code} %{size_upload} %{time_pretransfer}' \
+              -F "chat_id=${CHAT_ID}" \
+              -F "photo=@${FILE}" \
+              -F "has_spoiler=true" \
+              -F "parse_mode=HTML" \
+              -F "caption=${CAPTION}" \
+              -F "reply_to_message_id=${REPLY_ID}" ) || CURL_RC=$?
+        else
+            echo "📤 Sending (no reply) attempt $ATTEMPT/3"
+            CURL_STATS=$(curl -sS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" -X POST "${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/sendPhoto" \
+              -o "$RESP_BODY_FILE" -w '%{http_code} %{size_upload} %{time_pretransfer}' \
+              -F "chat_id=${CHAT_ID}" \
+              -F "photo=@${FILE}" \
+              -F "has_spoiler=true" \
+              -F "parse_mode=HTML" \
+              -F "caption=${CAPTION}" ) || CURL_RC=$?
+        fi
+        RESP=$(cat "$RESP_BODY_FILE" 2>/dev/null || true)
+        rm -f "$RESP_BODY_FILE"
+
+        SEND_OK=$(echo "$RESP" | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    print('1' if d.get('ok') else '0')
+except Exception:
+    print('0')
+")
+
+        [ "$SEND_OK" = "1" ] && break
+
+        # 超时/断连（28 超时、52 空回复、56 接收失败）：照片已完整上传或无法判断 → 不重发
+        case "$CURL_RC" in
+            28|52|56)
+                UPLOADED=$(echo "$CURL_STATS" | awk '{print $2}')
+                case "$UPLOADED" in ''|*[!0-9]*) UPLOADED='' ;; esac
+                if [ -z "$UPLOADED" ] || [ "$UPLOADED" -ge "$FILE_BYTES" ]; then
+                    SEND_UNCERTAIN='1'
+                    echo "⚠️ delivered_uncertain: curl rc=$CURL_RC 照片已上传(size_upload=${UPLOADED:-unknown}/${FILE_BYTES})但回执丢失，可能已送达，不重发 (attempt $ATTEMPT/3)" >&2
+                    break
+                fi
+                echo "🔁 curl rc=$CURL_RC 照片未完整上传(size_upload=${UPLOADED}/${FILE_BYTES})，可安全重试" >&2
+                ;;
+            0) ;;
+            *) echo "🔁 curl rc=$CURL_RC 请求未送达 Telegram，可安全重试" >&2 ;;
+        esac
+        [ "$ATTEMPT" -lt 3 ] && sleep "$SEND_RETRY_SLEEP"
+    done
+
+    # ── 5. 解析发送结果 ──
+    [ "$ALREADY_DELIVERED" = "1" ] || [ "$SEND_UNCERTAIN" = "1" ] || echo "$RESP" | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    if d.get('ok'):
+        print(f\"✅ 已发送 (msg_id={d['result']['message_id']})\")
+    else:
+        print(f\"❌ 发送失败: {d.get('description','unknown')}\")
+except Exception:
+    print('❌ 发送失败: invalid telegram response')
+"
+else
+    echo "ℹ️  Telegram 投递已被配置关闭，跳过 Telegram 发送流程"
+    SEND_OK="1"
+fi
+
+# ── 6. 生成交付摘要工具 ──
+write_delivery_summary() {
+    local OUT_FILE="$1"
+    local MODE="$2"
+    OUT_FILE="$OUT_FILE" MODE="$MODE" META_FILE="$META_FILE" DONE_FILE="$DONE_FILE" FILE="$FILE" REPLY_ID="$REPLY_ID" SEED="$SEED" ELAPSED="$ELAPSED" CAPTION="$CAPTION" RESP="$RESP" CURL_RC="$CURL_RC" CURL_STATS="$CURL_STATS" JOB_ID="$JOB_ID" CARD_ID="$CARD_ID" WORKFLOW="$WORKFLOW" REQUESTED_SEED="$REQUESTED_SEED" \
+    python3 - <<'PY'
+import json, os, re
+
+def parse_caption_parts(text: str):
+    text = (text or '').strip()
+    title = ''
+    quote = ''
+    m_title = re.match(r'^(.*?)(?:\n\s*\n|\n<blockquote>)', text, re.S)
+    if m_title:
+        title = m_title.group(1).strip()
+    elif text and '<blockquote>' not in text:
+        title = text.strip().splitlines()[0].strip()
+    m_quote = re.search(r'<blockquote>(.*?)</blockquote>', text, re.S)
+    if m_quote:
+        quote = ' '.join(m_quote.group(1).split())
+
+    person = scene = theme = narrative = lighting = style = ''
+    clean_title = title.replace('🎬', '').strip()
+    title_parts = [p.strip() for p in clean_title.split('·') if p.strip()]
+    if len(title_parts) >= 1: person = title_parts[0]
+    if len(title_parts) >= 2: scene = title_parts[1]
+    if len(title_parts) >= 3: theme = title_parts[2]
+    quote_parts = [p.strip() for p in quote.split('|') if p.strip()]
+    if len(quote_parts) >= 1: narrative = quote_parts[0]
+    if len(quote_parts) >= 2: lighting = quote_parts[1]
+    if len(quote_parts) >= 3: style = quote_parts[2]
+    return {
+        'title': title,
+        'quote': quote,
+        'person': person,
+        'scene': scene,
+        'theme': theme,
+        'narrative': narrative,
+        'lighting': lighting,
+        'style': style,
+    }
+
+meta_path = os.environ.get('META_FILE')
+meta = {}
+if meta_path and os.path.exists(meta_path):
+    try:
+        meta = json.load(open(meta_path, encoding='utf-8'))
+    except Exception:
+        meta = {}
+caption = os.environ.get('CAPTION', '')
+parsed = parse_caption_parts(meta.get('caption') or caption)
+telegram_raw = os.environ.get('RESP') or '{}'
+try:
+    telegram = json.loads(telegram_raw)
+except Exception:
+    telegram = telegram_raw
+payload = {
+    'mode': os.environ.get('MODE'),
+    'job_id': os.environ.get('JOB_ID'),
+    'card_id': os.environ.get('CARD_ID') or meta.get('card_id'),
+    'workflow': os.environ.get('WORKFLOW'),
+    'requested_seed': os.environ.get('REQUESTED_SEED') or None,
+    'meta_file': meta_path,
+    'done_file': os.environ.get('DONE_FILE'),
+    'image_file': os.environ.get('FILE'),
+    'reply_id': os.environ.get('REPLY_ID'),
+    'seed': os.environ.get('SEED'),
+    'elapsed': os.environ.get('ELAPSED'),
+    'caption': caption,
+    'telegram_response': telegram,
+    'curl_rc': os.environ.get('CURL_RC') or None,
+    'curl_stats': os.environ.get('CURL_STATS') or None,
+    'telegram_message_id': ((telegram.get('result') or {}).get('message_id')) if isinstance(telegram, dict) else None,
+    'person': meta.get('person') or parsed['person'],
+    'scene': meta.get('scene') or parsed['scene'],
+    'theme': meta.get('theme') or parsed['theme'],
+    'narrative': meta.get('narrative') or meta.get('intent') or parsed['narrative'],
+    'lighting': meta.get('lighting') or parsed['lighting'],
+    'style': meta.get('style') or parsed['style'],
+    'user_input': meta.get('user_input', ''),
+    'meta_caption': meta.get('caption', ''),
+}
+with open(os.environ['OUT_FILE'], 'w', encoding='utf-8') as f:
+    json.dump(payload, f, ensure_ascii=False, indent=2)
+PY
+}
+
+# ── 7. 发送成功/失败后的处理（默认失败不中断批量连抽） ──
+DELIVERY_STATUS="success"
+if [ "$ALREADY_DELIVERED" = "1" ]; then
+    echo "ℹ️  已有交付记录，本次不重复写摘要"
+elif [ "$SEND_UNCERTAIN" = "1" ]; then
+    DELIVERY_STATUS="uncertain"
+    UNCERTAIN_FILE="$FAILED_DIR/delivery_uncertain_$(date +%s).json"
+    write_delivery_summary "$UNCERTAIN_FILE" "delivered_uncertain"
+    echo "⚠️ 可能已送达（回执丢失，未重发），现场已保存: $UNCERTAIN_FILE" >&2
+elif [ "$SEND_OK" = "1" ]; then
+    SUCCESS_STAMP=$(date +%s)
+    SUCCESS_FILE="$SUCCESS_DIR/delivery_success_${SUCCESS_STAMP}.json"
+    write_delivery_summary "$SUCCESS_FILE" "success"
+    echo "✅ 交付摘要已保存: $SUCCESS_FILE"
+else
+    DELIVERY_STATUS="failed"
+    FAIL_STAMP=$(date +%s)
+    FAIL_FILE="$FAILED_DIR/delivery_failed_${FAIL_STAMP}.json"
+    write_delivery_summary "$FAIL_FILE" "failed"
+    echo "⚠️ 发送失败，但不中断批量连抽，失败现场已保存: $FAIL_FILE" >&2
+fi
+
+# QueueStore 完成态必须由当前 lease token 条件 ACK；重复 ACK 幂等成功。
+ACK_OK=0
+for ACK_ATTEMPT in 1 2 3; do
+    set +e
+    ACK_RESULT=$(python3 "$QUEUE_SCRIPT" ack \
+        --job-id "$JOB_ID" \
+        --lease-token "$LEASE_TOKEN" \
+        --result-file "$DONE_FILE")
+    ACK_RC=$?
+    set -e
+    ACK_OK=$(ACK_JSON="$ACK_RESULT" python3 -c '
+import json, os
+try:
+    data = json.loads(os.environ.get("ACK_JSON") or "{}")
+    print("1" if data.get("ok") and data.get("status") in {"completed", "already_completed"} else "0")
+except Exception:
+    print("0")
+')
+    [ "$ACK_RC" -eq 0 ] && [ "$ACK_OK" = "1" ] && break
+    echo "⚠️ QueueStore ACK 失败 (${ACK_ATTEMPT}/3): ${ACK_RESULT}" >&2
+    [ "$ACK_ATTEMPT" -lt 3 ] && sleep 0.2
+done
+if [ "$ACK_OK" != "1" ]; then
+    echo "❌ 交付已完成但队列 ACK 未确认；保留 meta/done 现场并返回失败" >&2
+    exit 1
+fi
+echo "✅ QueueStore ACK: $ACK_RESULT"
+
+# 仅在 QueueStore 已确认当前 lease 完成后，才允许该 job 更新卡片。
+if [ "${DELIVERY_WEBUI:-1}" = "1" ]; then
+    STATUS_SERVICE="${CU_STATUS_SERVICE:-${SCRIPT_DIR}/../webui/card_status_service.py}"
+    set +e
+    STATUS_RESULT=$(python3 "$STATUS_SERVICE" complete \
+        --card "$CARD_ID" \
+        --job-id "$JOB_ID" \
+        --image "$FILE")
+    STATUS_RC=$?
+    set -e
+    if [ "$STATUS_RC" -eq 0 ]; then
+        echo "✅ 卡片完成态同步: $STATUS_RESULT"
+    else
+        echo "⚠️ 卡片完成态同步已跳过或失败（队列 ACK 已完成）: $STATUS_RESULT" >&2
+    fi
+elif [ -n "${CARD_ID:-}" ]; then
+    # delivery_webui=false 时若不回写，图会变成「孤儿 PNG」，
+    # 列表扫描时又合成一条虚拟卡 → 同一张图出现两条卡（SUBMITTED + RENDERED）。
+    # 所以只要该 job 关联了卡片，就仍然回写 render_image。
+    STATUS_SERVICE="${CU_STATUS_SERVICE:-${SCRIPT_DIR}/../webui/card_status_service.py}"
+    set +e
+    STATUS_RESULT=$(python3 "$STATUS_SERVICE" complete \
+        --card "$CARD_ID" \
+        --job-id "$JOB_ID" \
+        --image "$FILE")
+    STATUS_RC=$?
+    set -e
+    if [ "$STATUS_RC" -eq 0 ]; then
+        echo "✅ 卡片完成态同步（delivery_webui 关闭，仍回写卡片）: $STATUS_RESULT"
+    else
+        echo "⚠️ 卡片完成态同步失败: $STATUS_RESULT" >&2
+    fi
+else
+    echo "ℹ️  WebUI 本地卡片更新已被配置关闭，且该任务无关联卡片，跳过"
+fi
+
+rm -f "$META_FILE" "$DONE_FILE"
+echo "🧹 Cleaned meta + done"
+
+# 统一释放 GPU 锁，保证后续任务可继续
+release_gpu_lock
+
+# ── 8. 检查队列：自动续跑下一张；若队列空则延迟自动停 ComfyUI ──
+# SCRIPT_DIR, CONFIG_FILE, WORKSPACE are already defined at the top
+
+# /draw_terminate 放过了本 job（已出图、只剩发送）。终止语义是"停当前任务，队列保留"，
+# 发完这张后不能自动续跑下一张（也不做卡间 restart / 空闲停机）。
+# terminate 写入 cu-terminate-hold.json（job_ids + ts）；仅命中本 job 且 30 分钟内才生效，
+# 命中即消费，用户 /draw_resume 或新提交时由队列正常续跑。
+TERMINATE_HOLD_FILE="$TMP_DIR/cu-terminate-hold.json"
+if [ -f "$TERMINATE_HOLD_FILE" ]; then
+    HOLD_HIT=$(HOLD_FILE="$TERMINATE_HOLD_FILE" HOLD_JOB_ID="$JOB_ID" python3 - <<'PY' 2>/dev/null || echo ""
+import json, os, time
+path = os.environ["HOLD_FILE"]
+job = os.environ["HOLD_JOB_ID"]
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    data = {}
+ids = [str(x) for x in (data.get("job_ids") or [])] if isinstance(data, dict) else []
+fresh = isinstance(data, dict) and (time.time() - float(data.get("ts") or 0)) < 1800
+hit = fresh and job in ids
+rest = [x for x in ids if x != job] if fresh else []
+try:
+    if rest:
+        data["job_ids"] = rest
+        json.dump(data, open(path, "w", encoding="utf-8"))
+    else:
+        os.unlink(path)
+except OSError:
+    pass
+print("hit" if hit else "")
+PY
+)
+    if [ "$HOLD_HIT" = "hit" ]; then
+        echo "🛑 本 job 在 /draw_terminate 时被放过（只发送）：发完不自动续跑，队列已保留，需要时 /draw_resume 或新提交"
+        exit 0
+    fi
+fi
+
+DETACHED_SPAWN="${SCRIPT_DIR}/detached_spawn.py"
+COMFY_STOP_SCRIPT="${SCRIPT_DIR}/comfyui-start.sh"
+AUTO_STOP_DELAY="${CU_AUTO_STOP_DELAY:-60}"
+
+# 连抽卡间策略（与 /free 平级可切换；仅队列非空时执行；单张跳过）
+# CU_BETWEEN_CARDS=restart（默认）| free | off
+# 注意：set -u 下 $VAR 若紧贴全角字符（如（）会被误解析成变量名后缀，
+# 因此本段所有插值一律用 ${VAR} 花括号形式。
+BETWEEN_MODE="restart"
+BETWEEN_RAW=$(printf '%s' "${CU_BETWEEN_CARDS:-restart}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+case "$BETWEEN_RAW" in
+    0|false|no|off|none|skip) BETWEEN_MODE="off" ;;
+    free|unload) BETWEEN_MODE="free" ;;
+    restart|reboot|stop) BETWEEN_MODE="restart" ;;
+    *)
+        echo "⚠️ 未知 CU_BETWEEN_CARDS='${BETWEEN_RAW}'，回退默认 restart"
+        BETWEEN_MODE="restart"
+        ;;
+esac
+
+set +e
+QUEUE_STATUS_RESULT=$(python3 "$QUEUE_SCRIPT" status 2>/dev/null)
+QUEUE_STATUS_RC=$?
+set -e
+if [ "$QUEUE_STATUS_RC" -eq 0 ]; then
+    QUEUE_LEN=$(QUEUE_JSON="$QUEUE_STATUS_RESULT" python3 -c 'import json,os; print(int(json.loads(os.environ.get("QUEUE_JSON") or "{}").get("length") or 0))' 2>/dev/null || echo "1")
+else
+    # fail closed：队列状态不可确认时按“仍有任务”处理，禁止误判空队列。
+    QUEUE_LEN=1
+    echo "⚠️ 队列状态读取失败，保守跳过空队列停机判定: $QUEUE_STATUS_RESULT" >&2
+fi
+if [ "$QUEUE_LEN" -gt 0 ] 2>/dev/null; then
+    echo "📌 连抽卡间策略=${BETWEEN_MODE}（队列剩余 ${QUEUE_LEN}）"
+    case "$BETWEEN_MODE" in
+        restart)
+            echo "♻️ 停止 ComfyUI，进程级释放内存后再续跑下一张"
+            set +e
+            bash "$COMFY_STOP_SCRIPT" stop
+            STOP_RC=$?
+            set -e
+            if [ "$STOP_RC" -ne 0 ]; then
+                echo "⚠️ ComfyUI stop 返回非零($STOP_RC)，仍继续 resume（下一 worker 会再 start）"
+            fi
+            # 给 macOS unified memory / MPS 一点回收窗口（与 cu-worker 自愈分支 sleep 3 对齐）
+            sleep 3
+            echo "✅ 卡间 restart 完成，准备 resume"
+            ;;
+        free)
+            FREE_RESULT=$(python3 "$QUEUE_SCRIPT" free-memory --if-queued 2>/dev/null || echo '{"status":"error"}')
+            FREE_STATUS=$(echo "$FREE_RESULT" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("status") or ""))' 2>/dev/null || echo "")
+            if [ "$FREE_STATUS" = "ok" ]; then
+                echo "🧹 已 /free 卸载模型，准备续跑下一张"
+            elif [ "$FREE_STATUS" = "timeout" ]; then
+                echo "⚠️ /free 等待超时，仍继续续跑: $FREE_RESULT"
+            elif [ "$FREE_STATUS" = "skipped" ]; then
+                echo "ℹ️ 跳过 /free: $FREE_RESULT"
+            else
+                echo "⚠️ /free 未完全成功($FREE_STATUS)，继续续跑: $FREE_RESULT"
+            fi
+            ;;
+        off)
+            echo "ℹ️ 卡间策略=off，跳过 free/restart，直接续跑"
+            ;;
+    esac
+else
+    echo "ℹ️ 队列已空（单张或末张），跳过卡间 free/restart"
+fi
+
+set +e
+RESUME_RESULT=$(python3 "$QUEUE_SCRIPT" resume 2>/dev/null)
+RESUME_RC=$?
+set -e
+RESUME_STATUS=$(echo "$RESUME_RESULT" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("status") or ""))' 2>/dev/null || echo "")
+
+if [ "$RESUME_STATUS" = "started" ]; then
+    NEXT_PID=$(echo "$RESUME_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("pid",""))' 2>/dev/null || echo "")
+    NEXT_LOG=$(echo "$RESUME_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("log",""))' 2>/dev/null || echo "")
+    echo "🆔 已启动下一张 worker: $NEXT_PID"
+    echo "📝 下一张日志: $NEXT_LOG"
+    if [ "$DELIVERY_STATUS" = "failed" ]; then
+        echo "📋 虽然上一张交付失败，下一张也已继续提交（图文仍按各自 META_FILE 独立对应）"
+    else
+        echo "📋 队列下一张已自动提交"
+    fi
+elif [ "$RESUME_STATUS" = "empty" ]; then
+    echo "🛌 队列已空，安排 ${AUTO_STOP_DELAY}s 空闲后自动停止 ComfyUI 释放内存"
+    STOP_TS=$(date +%s)_$$_$RANDOM
+    STOP_LOG="$TMP_DIR/comfyui-auto-stop_${STOP_TS}.log"
+    STOP_PID="$TMP_DIR/comfyui-auto-stop_${STOP_TS}.pid"
+    python3 "$DETACHED_SPAWN" \
+        --cwd "${WORKSPACE}" \
+        --log "$STOP_LOG" \
+        --pid-file "$STOP_PID" \
+        -- bash -lc "sleep ${AUTO_STOP_DELAY}; if [ ! -e '$TMP_DIR/cu-gpu.lock' ] && [ \"\$(python3 '$QUEUE_SCRIPT' status | python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"length\",0))')\" = \"0\" ] && ! pgrep -f 'cu-worker\.sh|cu-draw-card\.py' >/dev/null 2>&1; then bash '$COMFY_STOP_SCRIPT' stop; echo 'AUTO_STOP=done'; else echo 'AUTO_STOP=skipped'; fi" >/dev/null || true
+    echo "🧹 已安排 ComfyUI 自动停机检查: $STOP_LOG"
+else
+    echo "⚠️ 队列续跑未成功(rc=${RESUME_RC}): $RESUME_RESULT"
+    if [ "$DELIVERY_STATUS" = "failed" ]; then
+        echo "⚠️ 本轮交付失败，且队列续跑也未成功"
+    fi
+fi

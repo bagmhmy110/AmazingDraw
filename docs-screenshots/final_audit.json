@@ -1,0 +1,1058 @@
+[
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "tone",
+    "sent": "宫廷",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "scene",
+    "sent": "亭台",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "pose",
+    "sent": "以半身特写姿态正面居中占据画面",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "槽:配色",
+    "sent": "天青与湖蓝",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "槽:材质",
+    "sent": "天蚕丝",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "槽:纹样",
+    "sent": "山水纹",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "槽:袖型",
+    "sent": "丝绸垂坠袖",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "槽:裙装结构",
+    "sent": "仙侠长裙",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "槽:腰部",
+    "sent": "云纹腰封",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "单次",
+    "slot": "槽:肩部",
+    "sent": "云纹披肩",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "tone",
+    "sent": "宫廷",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "scene",
+    "sent": "亭台",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "pose",
+    "sent": "以半身特写姿态正面居中占据画面",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "槽:配色",
+    "sent": "天青与湖蓝",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "槽:材质",
+    "sent": "天蚕丝",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "槽:纹样",
+    "sent": "山水纹",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "槽:袖型",
+    "sent": "丝绸垂坠袖",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "槽:裙装结构",
+    "sent": "仙侠长裙",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "槽:腰部",
+    "sent": "云纹腰封",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫立绘",
+    "mode": "批量",
+    "slot": "槽:肩部",
+    "sent": "云纹披肩",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "age",
+    "sent": "18岁成年女性",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "temper",
+    "sent": "成熟御姐",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "hair",
+    "sent": "深棕齐肩短发，层次分明",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "sexy",
+    "sent": "高开叉至大腿根部露出修长双腿，勾勒玲珑曲线",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "pose",
+    "sent": "站在拱桥上，手扶住桥栏，侧身望向水面",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "scene",
+    "sent": "山间古寺台阶，青石板落松针，山门半掩",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "light",
+    "sent": "晨雾晨光",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "单次",
+    "slot": "outfit_cat",
+    "sent": "传统旗袍",
+    "ok": false,
+    "note": "0/1"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "age",
+    "sent": "18岁成年女性",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "temper",
+    "sent": "成熟御姐",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "hair",
+    "sent": "深棕齐肩短发，层次分明",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "sexy",
+    "sent": "高开叉至大腿根部露出修长双腿，勾勒玲珑曲线",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "pose",
+    "sent": "站在拱桥上，手扶住桥栏，侧身望向水面",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "scene",
+    "sent": "山间古寺台阶，青石板落松针，山门半掩",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "light",
+    "sent": "晨雾晨光",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "国漫人像",
+    "mode": "批量",
+    "slot": "outfit_cat",
+    "sent": "传统旗袍",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "单次",
+    "slot": "subject",
+    "sent": "角色 LoRA 演示",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "单次",
+    "slot": "scene",
+    "sent": "深夜便利店",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "单次",
+    "slot": "light",
+    "sent": "冷白荧光灯直射",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "单次",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "单次",
+    "slot": "aspect",
+    "sent": "竖构图 3:4",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "单次",
+    "slot": "age",
+    "sent": "18岁成年女性",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "单次",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "单次",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "单次",
+    "slot": "extra_style",
+    "sent": "guofeng_xianxia",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "批量",
+    "slot": "subject",
+    "sent": "角色 LoRA 演示",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "批量",
+    "slot": "scene",
+    "sent": "深夜便利店",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "批量",
+    "slot": "light",
+    "sent": "冷白荧光灯直射",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "批量",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "批量",
+    "slot": "aspect",
+    "sent": "竖构图 3:4",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "批量",
+    "slot": "age",
+    "sent": "18岁成年女性",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "批量",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "批量",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "MOSS",
+    "mode": "批量",
+    "slot": "extra_style",
+    "sent": "guofeng_xianxia",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "场景主题",
+    "sent": "hotel room",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "景别构图",
+    "sent": "macro detail shot",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "裸露液体",
+    "sent": "dressed",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "服装专项",
+    "sent": "lace bra/thong/corset",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "光影氛围",
+    "sent": "hair light",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "姿势动作",
+    "sent": "head bowed",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "表情眼神",
+    "sent": "blushing cheeks",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "风格胶片",
+    "sent": "fashion editorial",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "妆容专项",
+    "sent": "kawaii makeup, cute makeup, doll-like",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "发型饰品",
+    "sent": "long hair",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "瑕疵细节",
+    "sent": "oversized areolae",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "纹身标记",
+    "sent": "heart outline tattoo minimal line heart",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "道具宠物",
+    "sent": "gripping",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "ethnicity",
+    "sent": "中国汉族女性",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "age",
+    "sent": "18岁成年女性",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "extra_style",
+    "sent": "guofeng_xianxia",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "单次",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "场景主题",
+    "sent": "hotel room",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "景别构图",
+    "sent": "macro detail shot",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "裸露液体",
+    "sent": "dressed",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "服装专项",
+    "sent": "lace bra/thong/corset",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "光影氛围",
+    "sent": "hair light",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "姿势动作",
+    "sent": "head bowed",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "表情眼神",
+    "sent": "blushing cheeks",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "风格胶片",
+    "sent": "fashion editorial",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "妆容专项",
+    "sent": "kawaii makeup, cute makeup, doll-like",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "发型饰品",
+    "sent": "long hair",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "瑕疵细节",
+    "sent": "oversized areolae",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "纹身标记",
+    "sent": "heart outline tattoo minimal line heart",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "道具宠物",
+    "sent": "gripping",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "ethnicity",
+    "sent": "中国汉族女性",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "age",
+    "sent": "18岁成年女性",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "extra_style",
+    "sent": "guofeng_xianxia",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "模板",
+    "mode": "批量",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "写实",
+    "mode": "单次",
+    "slot": "shot",
+    "sent": "正面平视，35mm，全身",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "写实",
+    "mode": "单次",
+    "slot": "light",
+    "sent": "屋里自然光，很平",
+    "ok": false,
+    "note": "0/1"
+  },
+  {
+    "skill": "写实",
+    "mode": "单次",
+    "slot": "pose",
+    "sent": "妩媚回眸，直视镜头",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "写实",
+    "mode": "单次",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "写实",
+    "mode": "单次",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "写实",
+    "mode": "批量",
+    "slot": "shot",
+    "sent": "正面平视，35mm，全身",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "写实",
+    "mode": "批量",
+    "slot": "light",
+    "sent": "屋里自然光，很平",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "写实",
+    "mode": "批量",
+    "slot": "pose",
+    "sent": "妩媚回眸，直视镜头",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "写实",
+    "mode": "批量",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "写实",
+    "mode": "批量",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "age",
+    "sent": "21岁",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "temper",
+    "sent": "冷艳御姐",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "hair",
+    "sent": "樱桃红及肩短发微卷",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "sexy",
+    "sent": "突出丰满胸部曲线，高开叉至大腿根部露出修长双腿",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "pose",
+    "sent": "斜倚宫灯柱，一手撩拨发丝，微微歪头",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "scene",
+    "sent": "竹林禅院青石台阶，细竹摇影，薄雾轻浮",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "light",
+    "sent": "清冷月色",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "单次",
+    "slot": "style",
+    "sent": "guoman3d",
+    "ok": true,
+    "note": "1/1"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "age",
+    "sent": "21岁",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "temper",
+    "sent": "冷艳御姐",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "hair",
+    "sent": "樱桃红及肩短发微卷",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "sexy",
+    "sent": "突出丰满胸部曲线，高开叉至大腿根部露出修长双腿",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "pose",
+    "sent": "斜倚宫灯柱，一手撩拨发丝，微微歪头",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "scene",
+    "sent": "竹林禅院青石台阶，细竹摇影，薄雾轻浮",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "light",
+    "sent": "清冷月色",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "body",
+    "sent": "身形纤细，肩窄腰细",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "vibe",
+    "sent": "神情清冷疏离",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "shot",
+    "sent": "中近景，平视，35mm",
+    "ok": true,
+    "note": "2/2"
+  },
+  {
+    "skill": "厚涂",
+    "mode": "批量",
+    "slot": "style",
+    "sent": "guoman3d",
+    "ok": true,
+    "note": "2/2"
+  }
+]

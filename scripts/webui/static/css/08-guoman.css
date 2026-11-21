@@ -1,0 +1,570 @@
+/* =====================================================================
+   🐉 Guoman · 国漫服装装配与仙侠立绘
+   ===================================================================== */
+
+/* 注意：必须带 .active —— 否则会覆盖 .workspace-view 的 display:none，
+   让本视图永远可见并盖住其他视图。 */
+#view-guoman.active {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.guoman-skill-badge {
+  font-size: 0.7rem;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(140, 140, 160, 0.15);
+  color: var(--text-muted);
+  border: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+
+.guoman-skill-badge.ok {
+  background: rgba(60, 190, 120, 0.14);
+  color: #46c98a;
+  border-color: rgba(60, 190, 120, 0.35);
+}
+
+.guoman-skill-badge.warn {
+  background: rgba(230, 160, 60, 0.14);
+  color: #e0a03c;
+  border-color: rgba(230, 160, 60, 0.35);
+}
+
+.guoman-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── 出图写入的卡片绑定条 ── */
+.guoman-card-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  border-radius: 9px;
+  background: var(--bg-primary);
+  border: 1px dashed var(--border-soft);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.guoman-card-badge.has-card {
+  border-style: solid;
+  border-color: rgba(108, 92, 231, 0.35);
+  background: rgba(108, 92, 231, 0.08);
+}
+
+.guoman-badge-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+}
+
+.guoman-badge-label i {
+  color: #8b7bf0;
+  font-size: 0.7rem;
+}
+
+.guoman-badge-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  color: #8b7bf0;
+  background: rgba(108, 92, 231, 0.12);
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+
+.guoman-card-badge .guoman-mini-btn {
+  margin-left: auto;
+  padding: 2px 9px;
+  font-size: 0.68rem;
+}
+
+/* ── 模式切换 ── */
+.guoman-mode-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.guoman-mode-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.12s ease;
+}
+
+.guoman-mode-btn i {
+  font-size: 1rem;
+  margin-bottom: 2px;
+  opacity: 0.8;
+}
+
+.guoman-mode-btn span {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.guoman-mode-btn small {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.guoman-mode-btn:hover {
+  border-color: rgba(120, 130, 220, 0.5);
+  transform: translateY(-1px);
+}
+
+.guoman-mode-btn.active {
+  border-color: #6c5ce7;
+  background: linear-gradient(180deg, rgba(108, 92, 231, 0.16), rgba(108, 92, 231, 0.05));
+  box-shadow: 0 0 0 1px rgba(108, 92, 231, 0.35) inset;
+}
+
+.guoman-mode-btn.active i {
+  color: #8b7bf0;
+  opacity: 1;
+}
+
+/* ── 参数面板 ── */
+.guoman-panel {
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.guoman-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.guoman-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.guoman-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.guoman-field select,
+.guoman-field input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-family: inherit;
+}
+
+.guoman-field select:focus,
+.guoman-field input:focus {
+  outline: none;
+  border-color: #6c5ce7;
+  box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.18);
+}
+
+.guoman-hint {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-style: normal;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
+.guoman-combo-only,
+.guoman-batch-only {
+  padding-top: 4px;
+  border-top: 1px dashed var(--border-soft);
+}
+
+/* ── 服装槽位折叠区（并入立绘模式）── */
+.guoman-slot-fold {
+  border-top: 1px dashed var(--border-soft);
+  padding-top: 10px;
+}
+
+.guoman-slot-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.guoman-slot-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.guoman-slot-fold > summary i {
+  color: #8b7bf0;
+  font-size: 0.75rem;
+}
+
+.guoman-slot-fold > summary:hover {
+  color: #8b7bf0;
+}
+
+.guoman-slot-fold > summary::after {
+  content: "▾";
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  transition: transform 0.16s ease;
+}
+
+.guoman-slot-fold[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.guoman-slot-count {
+  font-size: 0.66rem;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(108, 92, 231, 0.16);
+  color: #8b7bf0;
+  border: 1px solid rgba(108, 92, 231, 0.3);
+  font-weight: 500;
+}
+
+.guoman-slot-count:empty {
+  display: none;
+}
+
+.guoman-slot-grid {
+  margin-top: 10px;
+}
+
+.guoman-slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.guoman-slot-actions .guoman-mini-btn {
+  margin-left: 0;
+}
+
+.guoman-slot-tip {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.is-hidden {
+  display: none !important;
+}
+
+/* ── 操作按钮 ── */
+.guoman-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+.guoman-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.guoman-btn:hover:not(:disabled) {
+  border-color: rgba(120, 130, 220, 0.55);
+  background: var(--bg-elevated);
+}
+
+.guoman-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.guoman-btn.primary {
+  background: linear-gradient(135deg, #6c5ce7, #8b7bf0);
+  border-color: transparent;
+  color: #fff;
+}
+
+.guoman-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.guoman-status {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.guoman-status.ok {
+  color: #46c98a;
+}
+
+.guoman-status.warn {
+  color: #e0a03c;
+}
+
+.guoman-status.error {
+  color: #e05c5c;
+}
+
+/* ── 输出区 ── */
+.guoman-output {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.guoman-card {
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.guoman-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+}
+
+.guoman-card-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.guoman-card-title i {
+  color: #8b7bf0;
+  font-size: 0.75rem;
+}
+
+.guoman-card-meta {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.guoman-mini-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: border-color 0.14s ease, color 0.14s ease;
+}
+
+.guoman-mini-btn:hover {
+  border-color: #6c5ce7;
+  color: #8b7bf0;
+}
+
+/* 卡片上的「生成图片」主按钮 */
+.guoman-mini-btn.primary {
+  margin-left: auto;
+  background: linear-gradient(135deg, #6c5ce7, #8b7bf0);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 500;
+}
+
+.guoman-mini-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  color: #fff;
+}
+
+.guoman-mini-btn.primary:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
+/* primary 之后的复制按钮不再抢 margin-left:auto */
+.guoman-mini-btn.primary + .guoman-mini-btn {
+  margin-left: 0;
+}
+
+.guoman-batch-head .guoman-mini-btn.primary {
+  margin-left: auto;
+}
+
+.guoman-batch-head .guoman-mini-btn.primary + .guoman-mini-btn {
+  margin-left: 0;
+}
+
+.guoman-prompt-text {
+  padding: 16px 18px;
+  font-size: 0.86rem;
+  line-height: 1.85;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.guoman-prompt-text.compact {
+  padding: 10px 14px 14px;
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+/* ── 元素拆解 ── */
+.guoman-breakdown {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.guoman-breakdown summary {
+  padding: 10px 16px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.guoman-breakdown summary::-webkit-details-marker {
+  display: none;
+}
+
+.guoman-breakdown summary:hover {
+  color: #8b7bf0;
+}
+
+.guoman-breakdown pre {
+  margin: 0;
+  padding: 4px 16px 16px;
+  font-size: 0.76rem;
+  line-height: 1.8;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+
+/* ── 批量列表 ── */
+.guoman-batch-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+.guoman-batch-item {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.guoman-batch-item:last-child {
+  border-bottom: none;
+}
+
+.guoman-batch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+
+.guoman-batch-idx {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #8b7bf0;
+  font-variant-numeric: tabular-nums;
+}
+
+.guoman-tag {
+  font-size: 0.66rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(108, 92, 231, 0.16);
+  color: #8b7bf0;
+  border: 1px solid rgba(108, 92, 231, 0.28);
+}
+
+.guoman-tag.ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--border-soft);
+}
+
+.guoman-batch-head .guoman-mini-btn {
+  margin-left: auto;
+  padding: 2px 8px;
+}
+
+/* ── 窄屏适配 ── */
+@media (max-width: 900px) {
+  .guoman-mode-row {
+    grid-template-columns: 1fr;
+  }
+
+  .guoman-scroll {
+    padding: 14px 14px 24px;
+  }
+}

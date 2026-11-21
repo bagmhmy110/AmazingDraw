@@ -1,0 +1,26 @@
+# 统一换行符，避免 Windows/macOS 协作时的 LF/CRLF 噪音
+* text=auto
+
+# 脚本必须保持 LF，否则 bash 会报错
+*.sh text eol=lf
+*.bat text eol=crlf
+
+# 二进制文件不做换行转换
+*.pyd binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.svg text
+*.zip binary
+*.ico binary
+
+# 文档与代码统一 LF
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md text eol=lf
